@@ -1,7 +1,8 @@
 import sys
 import re
 from circuits import Component, Event
-from circuits.net.sockets import *
+from circuits.net import sockets
+#from circuits.net.sockets import *
 from crypto import *
 import user
 
@@ -60,7 +61,7 @@ class Client(Component):
 		self.closing = False
 		self.waiting = False
 
-		TCPClient().register(self)
+		sockets.TCPClient().register(self)
 		if len(sys.argv) > 1:
 			if sys.argv[1] == '-d':
 				from circuits import Debugger
@@ -89,10 +90,10 @@ class Client(Component):
 					print("Invalid input. Accept or deny?")
 			ciphertext = encrypt_AES(self.symkey, (self.username+','+challenger).encode())
 			if response == 'accept':
-				self.fire(write(B_CHALNGACCEPT+ciphertext))
+				self.fire(sockets.write(B_CHALNGACCEPT+ciphertext))
 				self.fire(GameSession())
 			elif response == 'deny':
-				self.fire(write(B_CHALNGDENY+ciphertext))
+				self.fire(sockets.write(B_CHALNGDENY+ciphertext))
 		elif code == int(S_CHALNGACCEPT):
 			challenged = decrypt_AES(self.symkey, message)
 			print("%s has accepted your challenge." % challenged)
@@ -129,7 +130,7 @@ class Client(Component):
 			pubkey = RSA.importKey(message)
 			self.pubkey = PKCS1_OAEP.new(pubkey)
 			ciphertext = self.pubkey.encrypt(self.symkey)
-			self.fire(write(B_SYMKEY+ciphertext))
+			self.fire(sockets.write(B_SYMKEY+ciphertext))
 		else:
 			print("Unrecognized byte code", file=sys.stderr)
 
@@ -144,9 +145,9 @@ class Client(Component):
 		elif usrin == 'exit' or usrin == 'quit':
 			print("Exiting...")
 			self.closing = True
-			self.fire(close())
+			self.fire(sockets.close())
 		elif usrin == 'users' or usrin == 'list':
-			self.fire(write(B_USERLIST))
+			self.fire(sockets.write(B_USERLIST))
 			self.waiting = True
 		elif usrin == 'challenge':
 			print("Enter name of user to challenge.")
@@ -168,11 +169,11 @@ class Client(Component):
 		self.stop()
 
 	def ready(self, *args):
-		self.fire(connect(self.host, self.port))
+		self.fire(sockets.connect(self.host, self.port))
 
 	def Challenge(self, toChallenge):
 		ciphertext = encrypt_AES(self.symkey, toChallenge.encode())
-		self.fire(write(B_CHALNG+ciphertext))
+		self.fire(sockets.write(B_CHALNG+ciphertext))
 
 	def GameSession(self):
 		pass
@@ -185,7 +186,7 @@ class Client(Component):
 		else:
 			self.username = username
 			ciphertext = encrypt_AES(self.symkey, self.username.encode())
-			self.fire(write(B_NEWUSER+ciphertext))
+			self.fire(sockets.write(B_NEWUSER+ciphertext))
 
 
 Client().run()

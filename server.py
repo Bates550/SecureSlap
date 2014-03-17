@@ -57,6 +57,7 @@ class Server(Component):
 		self += TCPServer((self.host, self.port))
 		if len(sys.argv) > 1:
 			if sys.argv[1] == '-d':
+				pass
 				from circuits import Debugger
 				self += Debugger()
 
@@ -70,16 +71,26 @@ class Server(Component):
 		# Send RSA public key to client.
 		self.fire(write(sock, B_SERVKEY+self.pubkeybstr))
 
-	# Does not get fired when a client closes. According to the developer, James Mills, this should not happen, but Circuits is not developed or debugged with Windows and is thus not guaranteed to work on Windows. I have not had the opportunity to test Secure Slap on a Unix system to confirm that this problem does not occur. 
-	def disconnected(self, sock):
-		print("disconnected")
+	def disconnect(self, sock):
+		noclients = True
 		deleted = self.clients[sock].username
 		del self.clients[sock]
 		print("Deleted %s." % deleted)
 		print("Clients:")
-		for user in self.clients:
-			if type(user) is Users:
-				print("   %s" % username)
+		for user in self.clients.values():
+			if type(user) is User:
+				print("   %s" % user.username)
+				noclients = False
+		if noclients:
+			print("   There are no clients connected.")
+
+	def close(self, sock):
+		print("close")
+
+	# Does not get fired when a client closes. According to the developer, James Mills, this should not happen, but Circuits is not developed or debugged with Windows and is thus not guaranteed to work on Windows. I have not had the opportunity to test Secure Slap on a Unix system to confirm that this problem does not occur. 
+	def disconnected(self):
+		pass
+		# Moved this functionality to disconnect event, which seems to work.
 
 	def read(self, sock, data):
 		code = data[0]
