@@ -57,7 +57,6 @@ class Server(Component):
 		self += TCPServer((self.host, self.port))
 		if len(sys.argv) > 1:
 			if sys.argv[1] == '-d':
-				pass
 				from circuits import Debugger
 				self += Debugger()
 
