@@ -1,5 +1,7 @@
 import sys
 import re
+import threading
+from queue import Queue
 from circuits import Component, Event
 from circuits.net import sockets
 #from circuits.net.sockets import *
@@ -31,6 +33,12 @@ B_CHALNGDENY	=	b'\x08'
 B_CHALNGFAIL	=	b'\x09'
 
 RANDBYTELEN		=	16
+M_CMDLIST		=	"\
+					help 	  -- shows this list\n\
+					challenge -- allows you to challenge another user\n\
+					users 	  -- displays a list of users currently connected\n\
+					list 	  -- same as users\n\
+					exit 	  -- exits Secure Slap\n"
 
 class Newuser(Event):
 	''' Fired when a message with code 00 is received from the server. Asks user for username and responds to the server with code 00 and the username. '''
@@ -57,8 +65,15 @@ class Client(Component):
 		self.users = []
 		self.username = ''
 		self.reserved = ['quit', 'exit']
-
-		self.closing = False
+		self.commands = {
+			'help'		: 	self.doHelp, 
+			'quit'		:	self.doQuit, 
+			'exit'		:	self.doQuit, 
+			'challenge'	:	self.doChallenge,
+			'users'		:	self.doList,
+			'list'		:	self.doList 
+		}
+		
 		self.waiting = False
 
 		sockets.TCPClient().register(self)
@@ -73,18 +88,14 @@ class Client(Component):
 		if code == int(S_CHALNG):
 			challenger = decrypt_AES(self.symkey, message)
 			print("%s is challenging you!\nAccept or deny?" % challenger)
-			response = ''
-			while response == '':
-				r = input("> ")
-				if r == 'accept' or r == 'Accept' 	\
-					or r == 'a' or r == 'A' 		\
-					or r == 'yes' or r == 'Yes'		\
-					or r  == 'y' or r == 'Y':
+			response = None
+			while not response:
+				r = input("> ").lower()
+				if r == 'accept' or r == 'a' 	\
+					or r == 'yes' or r  == 'y':
 					response = 'accept' 
-				elif r == 'deny' or r == 'Deny'		\
-					or r == 'd' or r == 'D'			\
-					or r == 'no' or r == 'No'		\
-					or r == 'n' or r == 'N':
+				elif r == 'deny' or r == 'd' 	\
+					or r == 'no' or r == 'n':
 					response = 'deny'
 				else:
 					print("Invalid input. Accept or deny?")
@@ -135,35 +146,37 @@ class Client(Component):
 			print("Unrecognized byte code", file=sys.stderr)
 
 	def Listen(self):
-		usrin = input(">>> ")
-		if usrin == 'help':
-			print("help 	 -- shows this list")
-			print("challenge -- allows you to challenge another user")
-			print("users 	 -- displays a list of users currently connected")
-			print("list 	 -- same as users")
-			print("exit 	 -- exits Secure Slap")
-		elif usrin == 'exit' or usrin == 'quit':
-			print("Exiting...")
-			self.closing = True
-			self.fire(sockets.close())
-		elif usrin == 'users' or usrin == 'list':
-			self.fire(sockets.write(B_USERLIST))
-			self.waiting = True
-		elif usrin == 'challenge':
-			print("Enter name of user to challenge.")
-			toChallenge = input("> ")
-			if toChallenge == self.username:
-				print("You cannot challenge yourself. Try a different command since you're obviously not ready for this.")
-			elif toChallenge == 'exit' or toChallenge == 'quit':
-				pass
-			else:
-				print("Challenging %s..." % toChallenge)
-				self.waiting = True
-				self.fire(Challenge(toChallenge))
+		user_input = input(">>> ")
+		if user_input in self.commands.keys():
+			self.commands[user_input]()
 		else: 
 			print("Invalid command. Type 'help' for a list of commands.")
-		if (self.closing == False and self.waiting == False):
+		if (self.waiting == False):
 			self.fire(Listen())
+
+	def doHelp(self):
+		print(M_CMDLIST)
+
+	def doQuit(self):
+		print("Exiting...")
+		self.waiting = True
+		self.fire(sockets.close())
+
+	def doList(self):
+		self.fire(sockets.write(B_USERLIST))
+		self.waiting = True	
+
+	def doChallenge(self):
+		print("Enter name of user to challenge.")
+		toChallenge = input("> ")
+		if toChallenge == self.username:
+			print("You cannot challenge yourself. Try a different command since you're obviously not ready for this.")
+		elif toChallenge == 'exit' or toChallenge == 'quit':
+			pass
+		else:
+			print("Challenging %s..." % toChallenge)
+			self.waiting = True
+			self.fire(Challenge(toChallenge))
 
 	def close(self):
 		self.stop()
@@ -189,5 +202,20 @@ class Client(Component):
 			self.fire(sockets.write(B_NEWUSER+ciphertext))
 
 
+def add_input(input_queue):
+	while True:
+		input_queue.put(sys.stdin.readline())
+
+def foobar():
+	input_queue = queue.Queue()
+	input_thread = threading.Thread(target=add_input, args=(input_queue,))
+	input_thread.start()
+	while True:
+		if not input_queue.empty():
+			print(input_queue.get())
+		if not input_thread.is_alive():
+			return
+
+	
 Client().run()
 
