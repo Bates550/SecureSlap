@@ -1,12 +1,13 @@
-import sys
-import re
-import threading
+# Outside dependencies 
+import sys, re, msvcrt, threading
 from queue import Queue
 from circuits import Component, Event
 from circuits.net import sockets
-#from circuits.net.sockets import *
+
+# Local dependencies  
 from crypto import *
 import user
+from inputThread import read_input
 
 ''' Message Code Str '''
 S_NEWUSER 		= 	'00'
@@ -33,12 +34,7 @@ B_CHALNGDENY	=	b'\x08'
 B_CHALNGFAIL	=	b'\x09'
 
 RANDBYTELEN		=	16
-M_CMDLIST		=	"\
-					help 	  -- shows this list\n\
-					challenge -- allows you to challenge another user\n\
-					users 	  -- displays a list of users currently connected\n\
-					list 	  -- same as users\n\
-					exit 	  -- exits Secure Slap\n"
+M_CMDLIST		=	"help 	  -- shows this list\nchallenge -- allows you to challenge another user\nusers 	  -- displays a list of users currently connected\nlist 	  -- same as users\nexit 	  -- exits Secure Slap\n"
 
 class Newuser(Event):
 	''' Fired when a message with code 00 is received from the server. Asks user for username and responds to the server with code 00 and the username. '''
@@ -75,6 +71,9 @@ class Client(Component):
 		}
 		
 		self.waiting = False
+		self.threadStop = False
+		self.first_cmd = True
+		self.user_buffer = ''
 
 		sockets.TCPClient().register(self)
 		if len(sys.argv) > 1:
@@ -87,7 +86,7 @@ class Client(Component):
 		message = data[1:]
 		if code == int(S_CHALNG):
 			challenger = decrypt_AES(self.symkey, message)
-			print("%s is challenging you!\nAccept or deny?" % challenger)
+			print("{} is challenging you!\nAccept or deny?".format(challenger))
 			response = None
 			while not response:
 				r = input("> ").lower()
@@ -105,16 +104,18 @@ class Client(Component):
 				self.fire(GameSession())
 			elif response == 'deny':
 				self.fire(sockets.write(B_CHALNGDENY+ciphertext))
+				#self.fire(Listen())
 		elif code == int(S_CHALNGACCEPT):
 			challenged = decrypt_AES(self.symkey, message)
-			print("%s has accepted your challenge." % challenged)
+			print("{} has accepted your challenge.".format(challenged))
+			# fire gamesession
 		elif code == int(S_CHALNGDENY):
 			challenged = decrypt_AES(self.symkey, message)
-			print("%s has denied your challenge." % challenged)
+			print("{} has denied your challenge.".format(challenged))
 			self.fire(Listen())
 		elif code == int(S_CHALNGFAIL):
 			toChallenge = decrypt_AES(self.symkey, message)
-			print("%s is not currently connected." % toChallenge)
+			print("{} is not currently connected.".format(toChallenge))
 			self.waiting = False
 			self.fire(Listen())
 		elif code == int(S_USERLIST):
@@ -123,7 +124,7 @@ class Client(Component):
 			print("Users:")
 			for user in self.users:
 				if user != self.username:
-					print("   %s" % user)
+					print("   {}".format(user))
 			self.waiting = False	
 			self.fire(Listen())	
 		elif code == int(S_NEWUSER):
@@ -146,11 +147,27 @@ class Client(Component):
 			print("Unrecognized byte code", file=sys.stderr)
 
 	def Listen(self):
-		user_input = input(">>> ")
-		if user_input in self.commands.keys():
-			self.commands[user_input]()
-		else: 
-			print("Invalid command. Type 'help' for a list of commands.")
+		# If prompt not yet printed, print prompt; user_buffer is implicitly empty since this is the first command.
+		if self.first_cmd:
+			self.first_cmd = False
+			user_input, user_finished = read_input('>>> ', '')
+		# If prompt already printed and there is partial input in user_buffer, print nothing and add to partial input
+		elif self.user_buffer:
+			temp = self.user_buffer
+			self.user_buffer = ''
+			user_input, user_finished = read_input('', '', partial_input=temp)
+		# If prompt already printed and no partial input, print nothing.
+		else:
+			user_input, user_finished = read_input('', '')			
+		if user_finished:
+			self.first_cmd = True			
+			user_input = user_input.lower().strip()
+			if user_input in self.commands.keys():
+				self.commands[user_input]()
+			else: 
+				print("Invalid command. Type 'help' for a list of commands.")
+		else:
+			self.user_buffer += user_input
 		if (self.waiting == False):
 			self.fire(Listen())
 
@@ -174,7 +191,7 @@ class Client(Component):
 		elif toChallenge == 'exit' or toChallenge == 'quit':
 			pass
 		else:
-			print("Challenging %s..." % toChallenge)
+			print("Challenging {}...".format(toChallenge))
 			self.waiting = True
 			self.fire(Challenge(toChallenge))
 
@@ -200,21 +217,6 @@ class Client(Component):
 			self.username = username
 			ciphertext = encrypt_AES(self.symkey, self.username.encode())
 			self.fire(sockets.write(B_NEWUSER+ciphertext))
-
-
-def add_input(input_queue):
-	while True:
-		input_queue.put(sys.stdin.readline())
-
-def foobar():
-	input_queue = queue.Queue()
-	input_thread = threading.Thread(target=add_input, args=(input_queue,))
-	input_thread.start()
-	while True:
-		if not input_queue.empty():
-			print(input_queue.get())
-		if not input_thread.is_alive():
-			return
 
 	
 Client().run()
