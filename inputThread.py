@@ -3,6 +3,7 @@
 import time
 #import queue
 from msvcrt import getche, kbhit
+
 '''
 class StoppableThread(threading.Thread):
 
@@ -15,8 +16,7 @@ class StoppableThread(threading.Thread):
 
 	def stopped(self):
 		return self._stop.isSet()
-'''
-'''
+
 def foobar():
 	# Function to be run in separate thread
 	def add_input(input_queue):
@@ -61,16 +61,16 @@ def input_loop():
 			stop_queue.put(True)
 			return
 '''
+
 # Adapted from Paul at http://stackoverflow.com/questions/3471461/raw-input-and-timeout
 # NOTE: This is a Windows only solution. 
 # TODO: Implement support for backspace (8 == backspace)
-def read_input(caption, default, timeout=1, partial_input=''):
+def read_input(caption, default, timeout=0.2, partial_input=''):
 	last_key_pressed_time = time.time()
 	if not partial_input:
 		print(caption, end='', flush=True)
 		user_input = ''
 	else:
-		#print(partial_input, end='', flush=True)
 		user_input = partial_input
 	return_val = user_input
 	user_finished = False
@@ -79,11 +79,15 @@ def read_input(caption, default, timeout=1, partial_input=''):
 		if kbhit():
 			char = getche()
 			last_key_pressed_time = time.time()
-			if ord(char) == 13: # enter_key
+			if ord(char) == 13: # enter key
 				user_input += char.decode()
 				break
-			elif ord(char) >= 32: #space_char
+			elif ord(char) >= 32: # non system or space character
 				user_input += char.decode()
+			elif ord(char) == 8: # backspace key
+				if user_input:
+					user_input = user_input[:-1]
+					print(' \b', end='', flush=True)
 			else:
 				break
 		if (time.time() - last_key_pressed_time) > timeout:
@@ -99,7 +103,8 @@ def read_input(caption, default, timeout=1, partial_input=''):
 	else:
 		return_val = default
 
-	return (return_val, user_finished)	
+	return (return_val, user_finished)
+
 
 
 # and some examples of usage
@@ -112,3 +117,5 @@ print('User finished: %s' % finished)
 print('Command entered: %s' % ans)
 print('User finished: %s' % finished)
 '''
+#print('hi', end='')
+#print('\b ')

@@ -62,12 +62,13 @@ class Client(Component):
 		self.username = ''
 		self.reserved = ['quit', 'exit']
 		self.commands = {
-			'help'		: 	self.doHelp, 
-			'quit'		:	self.doQuit, 
-			'exit'		:	self.doQuit, 
-			'challenge'	:	self.doChallenge,
-			'users'		:	self.doList,
-			'list'		:	self.doList 
+			'help'		: 	self._doHelp, 
+			'quit'		:	self._doQuit, 
+			'exit'		:	self._doQuit, 
+			'challenge'	:	self._doChallenge,
+			'users'		:	self._doList,
+			'list'		:	self._doList,
+			''			:	self.Listen
 		}
 		
 		self.waiting = False
@@ -151,14 +152,15 @@ class Client(Component):
 		if self.first_cmd:
 			self.first_cmd = False
 			user_input, user_finished = read_input('>>> ', '')
-		# If prompt already printed and there is partial input in user_buffer, print nothing and add to partial input
+		# If prompt already printed and there is partial input in user_buffer, print nothing and add to partial input.
 		elif self.user_buffer:
 			temp = self.user_buffer
 			self.user_buffer = ''
 			user_input, user_finished = read_input('', '', partial_input=temp)
 		# If prompt already printed and no partial input, print nothing.
 		else:
-			user_input, user_finished = read_input('', '')			
+			user_input, user_finished = read_input('', '')	
+		# If user has finished entering a command, print prompt on next Listen and evaluate command.	
 		if user_finished:
 			self.first_cmd = True			
 			user_input = user_input.lower().strip()
@@ -166,24 +168,25 @@ class Client(Component):
 				self.commands[user_input]()
 			else: 
 				print("Invalid command. Type 'help' for a list of commands.")
+		# If user has not finished entering a command, print nothing and append partial input to user_buffer
 		else:
 			self.user_buffer += user_input
 		if (self.waiting == False):
 			self.fire(Listen())
 
-	def doHelp(self):
+	def _doHelp(self):
 		print(M_CMDLIST)
 
-	def doQuit(self):
+	def _doQuit(self):
 		print("Exiting...")
 		self.waiting = True
 		self.fire(sockets.close())
 
-	def doList(self):
+	def _doList(self):
 		self.fire(sockets.write(B_USERLIST))
 		self.waiting = True	
 
-	def doChallenge(self):
+	def _doChallenge(self):
 		print("Enter name of user to challenge.")
 		toChallenge = input("> ")
 		if toChallenge == self.username:
