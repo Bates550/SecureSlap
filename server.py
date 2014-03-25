@@ -4,17 +4,17 @@ from crypto import *
 from user import *
 import sys
 
-''' Message Code Str '''
-S_NEWUSER 		= 	'00'
-S_USERLIST		=	'01'
-S_NAMETAKEN		=	'02'
-S_NAMEACCEPT	=	'03'
-S_SERVKEY 		=	'04'
-S_SYMKEY		= 	'05'
-S_CHALNG		=	'06'
-S_CHALNGACCEPT	=	'07'
-S_CHALNGDENY	=	'08'
-S_CHALNGFAIL	=	'09'
+''' Message Code Ints '''
+I_NEWUSER 		= 	0
+I_USERLIST		=	1
+I_NAMETAKEN		=	2
+I_NAMEACCEPT	=	3
+I_SERVKEY 		=	4
+I_SYMKEY		= 	5
+I_CHALNG		=	6
+I_CHALNGACCEPT	=	7
+I_CHALNGDENY	=	8
+I_CHALNGFAIL	=	9
 
 ''' Message Code Bytes '''
 B_NEWUSER		= 	b'\x00'
@@ -46,9 +46,16 @@ class Server(Component):
 		# or		-> {sock: symkey} if username has not yet been acquired.
 		self.clients = {}
 		self.ingame = []
-
-
 		self.sessions = {}
+		self.codes = {
+			I_NEWUSER 		:	self._do_code_newuser,
+			I_USERLIST		:	self._do_code_userlist,
+			I_SYMKEY		:	self._do_code_symkey,
+			I_CHALNG		:	self._do_code_chalng,
+			I_CHALNGACCEPT	:	self._do_code_chalngreply,
+			I_CHALNGDENY	:	self._do_code_chalngreply,
+			I_CHALNGFAIL	:	self._do_code_chalngfail
+		}
 
 		self.privkey = RSA.generate(2048, Random.new().read)
 		self.pubkey = self.privkey.publickey()
@@ -59,6 +66,14 @@ class Server(Component):
 			if sys.argv[1] == '-d':
 				from circuits import Debugger
 				self += Debugger()
+
+	def read(self, sock, data):
+		code = data[0]
+		message = data[1:]
+		if code in self.codes.keys():
+			self.codes[code](sock, message)
+		else:
+			print("Unrecognized byte code", file=sys.stderr)
 
 	def started(self, *args):
 		print("Server started.")
@@ -83,58 +98,6 @@ class Server(Component):
 		if noclients:
 			print("   There are no clients connected.")
 
-	def close(self, sock):
-		print("close")
-
-	# Does not get fired when a client closes. According to the developer, James Mills, this should not happen, but Circuits is not developed or debugged with Windows and is thus not guaranteed to work on Windows. I have not had the opportunity to test Secure Slap on a Unix system to confirm that this problem does not occur. 
-	def disconnected(self):
-		pass
-		# Moved this functionality to disconnect event, which seems to work.
-
-	def read(self, sock, data):
-		code = data[0]
-		message = data[1:]
-		if code == int(S_CHALNG):
-			challenger = self.clients[sock].username
-			toChallenge = decrypt_AES(self.clients[sock].symkey, message)
-			toChallengeExists = False
-			for socket, client in self.clients.items():
-				if type(client) is User:
-					if toChallenge == client.username:
-						toChallengeExists = True
-						ciphertext = encrypt_AES(self.clients[socket].symkey, challenger.encode())
-						self.fire(write(socket, B_CHALNG+ciphertext))
-						break
-			if not toChallengeExists:
-				ciphertext = encrypt_AES(self.clients[sock].symkey, toChallenge.encode())
-				self.fire(write(sock, B_CHALNGFAIL+ciphertext))
-		elif code == int(S_CHALNGACCEPT) or code == int(S_CHALNGDENY):
-			plaintext = decrypt_AES(self.clients[sock].symkey, message)
-			challenged, challenger = plaintext.split(',')
-			self.clients[sock].ingame = True
-			self.clients[sock].opponent = challenger
-			self.ingame.append(sock)
-			for socket in self.clients.keys():
-				if self.clients[socket].username == challenger:
-					ciphertext = encrypt_AES(self.clients[socket].symkey, challenged)
-					self.fire(write(socket, bytes.fromhex('0'+str(code))+ciphertext))
-					self.clients[socket].ingame = True
-					self.clients[socket].opponent = challenged
-					self.ingame.append(socket)
-					break
-		elif code == int(S_CHALNGFAIL):
-			pass
-		elif code == int(S_NEWUSER):
-			message = decrypt_AES(self.clients[sock], message)
-			self.fire(Newuser(sock, message))
-		elif code == int(S_USERLIST):
-			self.fire(Userlist(sock))
-		elif code == int(S_SYMKEY):
-			rsakey = PKCS1_OAEP.new(self.privkey)
-			# Store symkey in clients[sock] until username is acquired and User object can be created.
-			self.clients[sock] = rsakey.decrypt(message)
-			self.fire(write(sock, B_NEWUSER))
-
 	def Newuser(self, sock, username):
 		nametaken = False
 		for client in self.clients.values():
@@ -146,7 +109,7 @@ class Server(Component):
 		if not nametaken:
 			symkey = self.clients[sock]
 			self.clients[sock] = User(symkey, username)
-			self.fire(write(sock, B_NAMEACCEPT))
+			self.fire(write(sock, B_NAMEACCEPT))	
 
 	def Userlist(self, sock):
 		userlist = []
@@ -155,5 +118,51 @@ class Server(Component):
 				userlist.append(client.username)
 		ciphertext = encrypt_AES(self.clients[sock].symkey, ','.join(userlist).encode())
 		self.fire(write(sock, B_USERLIST+ciphertext))
+
+	def _do_code_chalng(self, sock, message):
+		challenger = self.clients[sock].username
+		toChallenge = decrypt_AES(self.clients[sock].symkey, message)
+		toChallengeExists = False
+		for socket, client in self.clients.items():
+			if type(client) is User:
+				if toChallenge == client.username:
+					toChallengeExists = True
+					ciphertext = encrypt_AES(self.clients[socket].symkey, challenger.encode())
+					self.fire(write(socket, B_CHALNG+ciphertext))
+					break
+		if not toChallengeExists:
+			ciphertext = encrypt_AES(self.clients[sock].symkey, toChallenge.encode())
+			self.fire(write(sock, B_CHALNGFAIL+ciphertext))
+	
+	def _do_code_chalngreply(self, sock, message):
+		plaintext = decrypt_AES(self.clients[sock].symkey, message)
+		challenged, challenger = plaintext.split(',')
+		self.clients[sock].ingame = True
+		self.clients[sock].opponent = challenger
+		self.ingame.append(sock)
+		for socket in self.clients.keys():
+			if self.clients[socket].username == challenger:
+				ciphertext = encrypt_AES(self.clients[socket].symkey, challenged)
+				self.fire(write(socket, bytes.fromhex('0'+str(code))+ciphertext))
+				self.clients[socket].ingame = True
+				self.clients[socket].opponent = challenged
+				self.ingame.append(socket)
+				break
+
+	def _do_code_chalngfail(self, sock, message):
+		pass
+
+	def _do_code_newuser(self, sock, message):
+		message = decrypt_AES(self.clients[sock], message)
+		self.fire(Newuser(sock, message))
+
+	def _do_code_userlist(self, sock, message):
+		self.fire(Userlist(sock))
+
+	def _do_code_symkey(self, sock, message):
+		rsakey = PKCS1_OAEP.new(self.privkey)
+		# Store symkey in clients[sock] until username is acquired and User object can be created.
+		self.clients[sock] = rsakey.decrypt(message)
+		self.fire(write(sock, B_NEWUSER))
 
 Server().run()
