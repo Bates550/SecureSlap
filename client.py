@@ -7,7 +7,7 @@ from circuits.net import sockets
 # Local dependencies  
 from crypto import *
 import user
-from inputThread import read_input
+from user_input import read_input
 
 ''' Message Code Str '''
 I_NEWUSER 		= 	0
