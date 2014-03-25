@@ -10,16 +10,16 @@ import user
 from inputThread import read_input
 
 ''' Message Code Str '''
-S_NEWUSER 		= 	'00'
-S_USERLIST		=	'01'
-S_NAMETAKEN		=	'02'
-S_NAMEACCEPT	=	'03'
-S_SERVKEY 		=	'04'
-S_SYMKEY		= 	'05'
-S_CHALNG		=	'06'
-S_CHALNGACCEPT	=	'07'
-S_CHALNGDENY	=	'08'
-S_CHALNGFAIL	=	'09'
+I_NEWUSER 		= 	0
+I_USERLIST		=	1
+I_NAMETAKEN		=	2
+I_NAMEACCEPT	=	3
+I_SERVKEY 		=	4
+I_SYMKEY		= 	5
+I_CHALNG		=	6
+I_CHALNGACCEPT	=	7
+I_CHALNGDENY	=	8
+I_CHALNGFAIL	=	9
 
 ''' Message Code Bytes '''
 B_NEWUSER		= 	b'\x00'
@@ -62,17 +62,27 @@ class Client(Component):
 		self.username = ''
 		self.reserved = ['quit', 'exit']
 		self.commands = {
-			'help'		: 	self._doHelp, 
-			'quit'		:	self._doQuit, 
-			'exit'		:	self._doQuit, 
-			'challenge'	:	self._doChallenge,
-			'users'		:	self._doList,
-			'list'		:	self._doList,
+			'help'		: 	self._do_cmd_help, 
+			'quit'		:	self._do_cmd_quit, 
+			'exit'		:	self._do_cmd_quit, 
+			'challenge'	:	self._do_cmd_challenge,
+			'users'		:	self._do_cmd_list,
+			'list'		:	self._do_cmd_list,
 			''			:	self.Listen
+		}
+		self.codes = {
+			I_NEWUSER 		:	self._do_code_newuser,
+			I_USERLIST		:	self._do_code_userlist,
+			I_NAMETAKEN		:	self._do_code_nametaken,
+			I_NAMEACCEPT	:	self._do_code_nameaccept,
+			I_SERVKEY 		:	self._do_code_servkey,
+			I_CHALNG		:	self._do_code_chalng,
+			I_CHALNGACCEPT	:	self._do_code_chalngaccept,
+			I_CHALNGDENY	:	self._do_code_chalngdeny,
+			I_CHALNGFAIL	:	self._do_code_chalngfail
 		}
 		
 		self.waiting = False
-		self.threadStop = False
 		self.first_cmd = True
 		self.user_buffer = ''
 
@@ -80,72 +90,89 @@ class Client(Component):
 		if len(sys.argv) > 1:
 			if sys.argv[1] == '-d':
 				from circuits import Debugger
-				self += Debugger()
+				self += Debugger()		
 
 	def read(self, data):
 		code = data[0]
 		message = data[1:]
-		if code == int(S_CHALNG):
-			challenger = decrypt_AES(self.symkey, message)
-			print("{} is challenging you!\nAccept or deny?".format(challenger))
-			response = None
-			while not response:
-				r = input("> ").lower()
-				if r == 'accept' or r == 'a' 	\
-					or r == 'yes' or r  == 'y':
-					response = 'accept' 
-				elif r == 'deny' or r == 'd' 	\
-					or r == 'no' or r == 'n':
-					response = 'deny'
-				else:
-					print("Invalid input. Accept or deny?")
-			ciphertext = encrypt_AES(self.symkey, (self.username+','+challenger).encode())
-			if response == 'accept':
-				self.fire(sockets.write(B_CHALNGACCEPT+ciphertext))
-				self.fire(GameSession())
-			elif response == 'deny':
-				self.fire(sockets.write(B_CHALNGDENY+ciphertext))
-				#self.fire(Listen())
-		elif code == int(S_CHALNGACCEPT):
-			challenged = decrypt_AES(self.symkey, message)
-			print("{} has accepted your challenge.".format(challenged))
-			# fire gamesession
-		elif code == int(S_CHALNGDENY):
-			challenged = decrypt_AES(self.symkey, message)
-			print("{} has denied your challenge.".format(challenged))
-			self.fire(Listen())
-		elif code == int(S_CHALNGFAIL):
-			toChallenge = decrypt_AES(self.symkey, message)
-			print("{} is not currently connected.".format(toChallenge))
-			self.waiting = False
-			self.fire(Listen())
-		elif code == int(S_USERLIST):
-			message = decrypt_AES(self.symkey, message)
-			self.users = message.split(',')
-			print("Users:")
-			for user in self.users:
-				if user != self.username:
-					print("   {}".format(user))
-			self.waiting = False	
-			self.fire(Listen())	
-		elif code == int(S_NEWUSER):
-			print("Welcome to the Secure Slap server!\nEntire your desired username:")
-			self.fire(Newuser())
-		elif code == int(S_NAMEACCEPT):
-			print("Username accepted! Enjoy your stay.")
-			self.fire(Listen())
-		elif code == int(S_NAMETAKEN):
-			print("Username already taken. Please enter another:")
-			self.fire(Newuser())
-		elif code == int(S_SERVKEY):
-			plainsymkey = Random.get_random_bytes(RANDBYTELEN)
-			self.symkey = SHA256.new(str(plainsymkey).encode()).digest()
-			pubkey = RSA.importKey(message)
-			self.pubkey = PKCS1_OAEP.new(pubkey)
-			ciphertext = self.pubkey.encrypt(self.symkey)
-			self.fire(sockets.write(B_SYMKEY+ciphertext))
+		if code in self.codes.keys():
+			self.codes[code](message)
 		else:
 			print("Unrecognized byte code", file=sys.stderr)
+
+	# NOTE: Doesn't actually use passed message.
+	def _do_code_newuser(self, message):
+		print("Welcome to the Secure Slap server!\nEntire your desired username:")
+		self.fire(Newuser())
+
+	def _do_code_userlist(self, message):
+		message = decrypt_AES(self.symkey, message)
+		self.users = message.split(',')
+		print("Users:")
+		for user in self.users:
+			if user != self.username:
+				print("   {}".format(user))
+		self.waiting = False	
+		self.fire(Listen())
+
+	# NOTE: Doesn't actually use passed message.
+	def _do_code_nametaken(self, message):
+		print("Username already taken. Please enter another:")
+		self.fire(Newuser())
+
+	# NOTE: Doesn't actually use passed message.
+	def _do_code_nameaccept(self, message):
+		print("Username accepted! Enjoy your stay.")
+		self.fire(Listen())
+
+	def _do_code_servkey(self, message):
+		plainsymkey = Random.get_random_bytes(RANDBYTELEN)
+		self.symkey = SHA256.new(str(plainsymkey).encode()).digest()
+		pubkey = RSA.importKey(message)
+		self.pubkey = PKCS1_OAEP.new(pubkey)
+		ciphertext = self.pubkey.encrypt(self.symkey)
+		self.fire(sockets.write(B_SYMKEY+ciphertext))
+
+	def _do_code_chalng(self, message):
+		challenger = decrypt_AES(self.symkey, message)
+		print("{} is challenging you!\nAccept or deny?".format(challenger))
+		response = None
+		while not response:
+			r = input("> ").lower()
+			if r == 'accept' or r == 'a' 	\
+				or r == 'yes' or r  == 'y':
+				response = 'accept' 
+			elif r == 'deny' or r == 'd' 	\
+				or r == 'no' or r == 'n':
+				response = 'deny'
+			else:
+				print("Invalid input. Accept or deny?")
+		ciphertext = encrypt_AES(self.symkey, (self.username+','+challenger).encode())
+		if response == 'accept':
+			self.fire(sockets.write(B_CHALNGACCEPT+ciphertext))
+			self.fire(GameSession())
+		elif response == 'deny':
+			self.fire(sockets.write(B_CHALNGDENY+ciphertext))
+			self.first_cmd = True
+			self.waiting = False
+			self.fire(Listen())
+
+	def _do_code_chalngaccept(self, message):
+		challenged = decrypt_AES(self.symkey, message)
+		print("{} has accepted your challenge.".format(challenged))
+		# fire gamesession
+
+	def _do_code_chalngdeny(self, message):
+		challenged = decrypt_AES(self.symkey, message)
+		print("{} has denied your challenge.".format(challenged))
+		self.waiting = False
+		self.fire(Listen())
+
+	def _do_code_chalngfail(self, message):
+		toChallenge = decrypt_AES(self.symkey, message)
+		print("{} is not currently connected.".format(toChallenge))
+		self.waiting = False
+		self._doChallenge()
 
 	def Listen(self):
 		# If prompt not yet printed, print prompt; user_buffer is implicitly empty since this is the first command.
@@ -174,25 +201,25 @@ class Client(Component):
 		if (self.waiting == False):
 			self.fire(Listen())
 
-	def _doHelp(self):
+	def _do_cmd_help(self):
 		print(M_CMDLIST)
 
-	def _doQuit(self):
+	def _do_cmd_quit(self):
 		print("Exiting...")
 		self.waiting = True
 		self.fire(sockets.close())
 
-	def _doList(self):
+	def _do_cmd_list(self):
 		self.fire(sockets.write(B_USERLIST))
 		self.waiting = True	
 
-	def _doChallenge(self):
+	def _do_cmd_challenge(self):
 		print("Enter name of user to challenge.")
 		toChallenge = input("> ")
 		if toChallenge == self.username:
 			print("You cannot challenge yourself. Try a different command since you're obviously not ready for this.")
 		elif toChallenge == 'exit' or toChallenge == 'quit':
-			pass
+			self.fire(Listen())
 		else:
 			print("Challenging {}...".format(toChallenge))
 			self.waiting = True
