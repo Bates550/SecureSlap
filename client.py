@@ -9,7 +9,7 @@ from crypto import *
 import user
 from user_input import read_input
 
-''' Message Code Str '''
+''' Message Code Ints '''
 I_NEWUSER 		= 	0
 I_USERLIST		=	1
 I_NAMETAKEN		=	2
@@ -172,7 +172,7 @@ class Client(Component):
 		toChallenge = decrypt_AES(self.symkey, message)
 		print("{} is not currently connected.".format(toChallenge))
 		self.waiting = False
-		self._doChallenge()
+		self._do_cmd_challenge()
 
 	def Listen(self):
 		# If prompt not yet printed, print prompt; user_buffer is implicitly empty since this is the first command.
