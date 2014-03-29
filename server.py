@@ -1,8 +1,12 @@
-from circuits import Component, Event
+# Outside dependencies
+import sys
+from circuits import Component, Event, Debugger
 from circuits.net.sockets import *
 from crypto import *
-from user import *
-import sys
+
+# Local dependencies
+from user import User
+from game import Game
 
 ''' Message Code Ints '''
 I_NEWUSER 		= 	0
@@ -15,6 +19,10 @@ I_CHALNG		=	6
 I_CHALNGACCEPT	=	7
 I_CHALNGDENY	=	8
 I_CHALNGFAIL	=	9
+I_GAMEQUIT		= 	10
+I_GAMESLAP		= 	11
+I_GAMENEXT		= 	12
+I_GAMEID		= 	13
 
 ''' Message Code Bytes '''
 B_NEWUSER		= 	b'\x00'
@@ -26,7 +34,11 @@ B_SYMKEY		= 	b'\x05'
 B_CHALNG		=	b'\x06'
 B_CHALNGACCEPT	=	b'\x07'
 B_CHALNGDENY	=	b'\x08'
-B_CHALNGFAIL	=	b'\x09'
+B_CHALNGFAIL	=	b'\x09' # b'\t'
+B_GAMEQUIT		= 	b'\x0A' # b'\n'
+B_GAMESLAP		= 	b'\x0B'
+B_GAMENEXT		= 	b'\x0C'
+B_GAMEID		= 	b'\x0D' # b'\r'
 
 class Newuser(Event):
 	''' Newuser event '''
@@ -36,25 +48,26 @@ class Userlist(Event):
 
 class Server(Component):
 	
-	def __init__(self, host='localhost', port=4000):
+	def __init__(self, host='localhost', port=8000):
 		super(Server, self).__init__()
 
 		self.host = host
 		self.port = port
 
-		# clients 	-> {sock: User object}
-		# or		-> {sock: symkey} if username has not yet been acquired.
-		self.clients = {}
+		self.clients = {} 	# clients 	-> {sock: User object} or {sock: symkey} if username has not yet been acquired.
 		self.ingame = []
-		self.sessions = {}
+		self.games = {}		# games 	-> {gameid : game}
 		self.codes = {
 			I_NEWUSER 		:	self._do_code_newuser,
 			I_USERLIST		:	self._do_code_userlist,
 			I_SYMKEY		:	self._do_code_symkey,
 			I_CHALNG		:	self._do_code_chalng,
-			I_CHALNGACCEPT	:	self._do_code_chalngreply,
-			I_CHALNGDENY	:	self._do_code_chalngreply,
-			I_CHALNGFAIL	:	self._do_code_chalngfail
+			I_CHALNGACCEPT	:	self._do_code_chalngaccept,
+			I_CHALNGDENY	:	self._do_code_chalngdeny,
+			I_CHALNGFAIL	:	self._do_code_chalngfail,
+			I_GAMEQUIT		:	self._do_code_gamequit,
+			I_GAMESLAP		:	self._do_code_gameslap,
+			I_GAMENEXT		:	self._do_code_gamenext
 		}
 
 		self.privkey = RSA.generate(2048, Random.new().read)
@@ -62,11 +75,13 @@ class Server(Component):
 		self.pubkeybstr = self.pubkey.exportKey()
 
 		self += TCPServer((self.host, self.port))
-		if len(sys.argv) > 1:
+		self += Debugger()
+		'''if len(sys.argv) > 1:
 			if sys.argv[1] == '-d':
 				from circuits import Debugger
 				self += Debugger()
-
+				'''
+				
 	def read(self, sock, data):
 		code = data[0]
 		message = data[1:]
@@ -119,6 +134,22 @@ class Server(Component):
 		ciphertext = encrypt_AES(self.clients[sock].symkey, ','.join(userlist).encode())
 		self.fire(write(sock, B_USERLIST+ciphertext))
 
+	def _do_code_gamequit(self, sock, message):
+		gameid = decrypt_AES(self.clients[sock].symkey, message)
+		player = self.clients[sock]
+		retval = self.games[gameid].player_quit(player)
+		if retval == 1:
+			self.games.remove(gameid)
+		elif retval == -1:
+			print('Tried to remove nonexistent player from game {}'.format(gameid), file=sys.stderr)
+
+	def _do_code_gameslap(self, sock, message):
+		time_slapped = float(decrypt_AES(self.clients[sock].symkey, message))
+		user = self.clients[sock]
+
+	def _do_code_gamenext(self, sock, message):
+		pass
+
 	def _do_code_chalng(self, sock, message):
 		challenger = self.clients[sock].username
 		toChallenge = decrypt_AES(self.clients[sock].symkey, message)
@@ -131,22 +162,41 @@ class Server(Component):
 					self.fire(write(socket, B_CHALNG+ciphertext))
 					break
 		if not toChallengeExists:
-			ciphertext = encrypt_AES(self.clients[sock].symkey, toChallenge.encode())
-			self.fire(write(sock, B_CHALNGFAIL+ciphertext))
+			self.fire(write(sock, B_CHALNGFAIL))
 	
-	def _do_code_chalngreply(self, sock, message):
+	# NOTE: this can be combined with _do_code_chalngden(); the only difference is which byte code is sent, but I will have to change the way arguments are passed in the read event if this is to work such that the code can be passed. I feel like if I just pass the code to all of the _do_code functions, why even have them in the codes dict? Maybe use *args for variable arg length?
+	def _do_code_chalngaccept(self, sock, message):
 		plaintext = decrypt_AES(self.clients[sock].symkey, message)
 		challenged, challenger = plaintext.split(',')
-		self.clients[sock].ingame = True
-		self.clients[sock].opponent = challenger
-		self.ingame.append(sock)
+		players = [self.clients[sock]]
+
+		for user in self.clients.values():
+			if user == challenger:
+				players.append(user)
+		
+		# Init new Game and put it in games dict with gameid as key
+		new_game = Game(players)
+		gameid = new_game.gameid()
+		self.games[gameid] = new_game		
+
+		# Set gameid for challenged in clients dict and send gameid
+		self.clients[sock].set_game(gameid)
+		ciphertext = encrypt_AES(self.clients[sock].symkey, str(gameid).encode())
+		self.fire(write(sock, B_GAMEID+ciphertext))
+
+		# Set gameid for challenger in clients dict and send gameid
+		for socket, user in self.clients.items():
+			if user == challenger:
+				print("Sent B_CHALNGACCEPT to {}".format(user))
+				ciphertext = encrypt_AES(user.symkey, str(gameid).encode())
+				self.fire(write(socket, B_CHALNGACCEPT+ciphertext))
+
+	def _do_code_chalngdeny(self, sock, message):
+		plaintext = decrypt_AES(self.clients[sock].symkey, message)
+		challenged, challenger = plaintext.split(',')
 		for socket in self.clients.keys():
 			if self.clients[socket].username == challenger:
-				ciphertext = encrypt_AES(self.clients[socket].symkey, challenged)
-				self.fire(write(socket, bytes.fromhex('0'+str(code))+ciphertext))
-				self.clients[socket].ingame = True
-				self.clients[socket].opponent = challenged
-				self.ingame.append(socket)
+				self.fire(write(socket, B_CHALNGDENY))
 				break
 
 	def _do_code_chalngfail(self, sock, message):

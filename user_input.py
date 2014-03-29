@@ -1,9 +1,9 @@
 import time
-from msvcrt import getche, kbhit
+from msvcrt import getch, getche, kbhit
 
 # Adapted from Paul at http://stackoverflow.com/questions/3471461/raw-input-and-timeout
 # NOTE: This is a Windows only solution. 
-def read_input(caption, default, timeout=0.2, partial_input=''):
+def read_input(caption, default='', timeout=0.2, partial_input=''):
 	last_key_pressed_time = time.time()
 	if not partial_input:
 		print(caption, end='', flush=True)
@@ -43,11 +43,49 @@ def read_input(caption, default, timeout=0.2, partial_input=''):
 
 	return (return_val, user_finished)
 
+def read_game_input(caption, my_turn=False, default='', timeout=0.2):
+	last_key_pressed_time = time.time()
+	user_input = None
+	print(caption, end='', flush=True)
+	while True:
+		if kbhit():
+			char = getch()
+			last_key_pressed_time = time.time()
+			o = ord(char)
+			if o == 32:			# ' '
+				print("~*SLAP*~", end='')
+				user_input = char.decode()
+			elif o == 110 and my_turn:		# 'n'
+				print("~*NEXT*~", end='')
+				user_input = char.decode() 
+			elif o == 113:		# 'q'
+				print("Exiting game session...", end='')
+				user_input = char.decode()
+
+		if (time.time() - last_key_pressed_time) > timeout:
+			break	
+
+	if user_input:
+		return user_input
+	else:
+		return default
+
+
 if __name__ == "__main__":
-	(ans, finished) = read_input('>>> ', '') 
+	first = True
+	char = None
+	while not char:
+		if first:
+			first = False
+			char = read_game_input('> ')
+		else:
+			char = read_game_input('')
+
+	'''(ans, finished) = read_input('>>> ', '') 
 	print('Command entered: %s' % ans)
 	print('User finished: %s' % finished)
 
 	(ans, finished) = read_input('>>> ', '', partial_input='hello ') 
 	print('Command entered: %s' % ans)
 	print('User finished: %s' % finished)
+	'''
